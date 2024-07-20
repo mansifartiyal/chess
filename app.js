@@ -9,58 +9,80 @@ const server = http.createServer(app);
 const io = socket(server);
 
 const chess = new Chess();
-let players = {};
 
-app.set("view engine", "ejs");
+let players = {};
+let currentPlayer = "w";
+
+app.set('view engine', 'ejs');
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.get("/", (req, res) => {
-    res.render("index", { title: "Chess Game" });
+app.get('/', (req, res) => {
+  res.render('index', { title: "Chess Game" });
 });
 
-io.on("connection", (uniquesocket) => {
-    console.log("A user connected");
+io.on('connection', function(uniquesocket) {
+    console.log("connected");
 
     if (!players.white) {
         players.white = uniquesocket.id;
-        uniquesocket.emit("playerRole", "w");
+        uniquesocket.emit('playerRole', 'w');
+        io.emit('playerStatus', 'w', 'Connected');
     } else if (!players.black) {
         players.black = uniquesocket.id;
-        uniquesocket.emit("playerRole", "b");
+        uniquesocket.emit('playerRole', 'b');
+        io.emit('playerStatus', 'b', 'Connected');
     } else {
-        uniquesocket.emit("spectatorRole");
+        uniquesocket.emit('spectatorRole', 'The game is full');
     }
 
-    uniquesocket.emit("boardState", chess.fen());
+    // Notify both players of the current status
+    if (players.white) {
+        io.to(players.white).emit('playerStatus', 'b', players.black ? 'Connected' : 'Waiting for opponent');
+    }
+    if (players.black) {
+        io.to(players.black).emit('playerStatus', 'w', players.white ? 'Connected' : 'Waiting for opponent');
+    }
 
-    uniquesocket.on("disconnect", () => {
+    uniquesocket.on('disconnect', function() {
         if (uniquesocket.id === players.white) {
             delete players.white;
+            io.emit('playerStatus', 'w', 'Disconnected');
         } else if (uniquesocket.id === players.black) {
             delete players.black;
+            io.emit('playerStatus', 'b', 'Disconnected');
+        }
+
+        // Notify the remaining player about the disconnection
+        if (players.white) {
+            io.to(players.white).emit('playerStatus', 'b', 'Disconnected');
+        }
+        if (players.black) {
+            io.to(players.black).emit('playerStatus', 'w', 'Disconnected');
         }
     });
 
-    uniquesocket.on("make", (move) => {
+    uniquesocket.on('move', function(move) {
         try {
-            if (chess.turn() === 'w' && uniquesocket.id !== players.white) return;
-            if (chess.turn() === 'b' && uniquesocket.id !== players.black) return;
+            if (chess.turn() === 'w' && uniquesocket.id !== players.white) { return; }
+            if (chess.turn() === 'b' && uniquesocket.id !== players.black) { return; }
 
             const result = chess.move(move);
+
             if (result) {
-                io.emit("move", move);
-                io.emit("boardState", chess.fen());
+                currentPlayer = chess.turn();
+                io.emit('move', move);
+                io.emit('boardState', chess.fen());
             } else {
                 console.log("Invalid move:", move);
-                uniquesocket.emit("invalidMove", move);
+                uniquesocket.emit('invalidMove', move);
             }
         } catch (err) {
-            console.log("Error handling move:", err);
-            uniquesocket.emit("invalidMove", move);
+            console.log(err);
+            uniquesocket.emit('invalidMove', move);
         }
     });
 });
 
-server.listen(3000, () => {
-    console.log("Server listening on port 3000");
+server.listen(3000, function() {
+    console.log("listening on port 3000");
 });
